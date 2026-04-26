@@ -1,5 +1,3 @@
-#Code for Patched UNET as it determines to compute or predict from the previous step by cloning the sample to cache for skipping step
-
 
 import numpy as np
 import torch
