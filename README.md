@@ -1,32 +1,35 @@
 # ZEUS-Optimized Stable Diffusion Pipeline
 
-An energy-efficient implementation of Stable Diffusion that leverages the ZEUS optimization framework to reduce GPU energy consumption while maintaining image generation quality.
+A training-free acceleration method for Stable Diffusion that achieves **2-3x speedup** while maintaining image generation quality through intelligent step skipping and second-order prediction.
 
 ## Overview
 
-This project integrates the [ZEUS energy optimization framework](https://ml.energy/zeus/) with Hugging Face's Diffusers library to create an energy-aware Stable Diffusion pipeline. ZEUS automatically optimizes GPU power consumption during inference, making AI image generation more sustainable and cost-effective.
+This project implements the ZEUS (Zero-cost Extrapolation-based Unified Sparsity) acceleration framework for Stable Diffusion pipelines. ZEUS is a novel approach that speeds up diffusion model inference by strategically skipping denoiser evaluations and approximating them using a second-order predictor.
 
 ### What is ZEUS?
 
-ZEUS is an open-source framework developed at the University of Michigan for measuring and optimizing the energy consumption of deep learning workloads. It intelligently navigates the tradeoff between energy efficiency and performance by:
+ZEUS is a training-free acceleration method introduced in the paper ["ZEUS: Accelerating Diffusion Models with Only Second-Order Predictor"](https://arxiv.org/abs/2604.01552) (April 2026). It addresses the inference latency bottleneck in diffusion models through:
 
-- **GPU Power Limit Optimization**: Automatically finding optimal power limits that minimize energy while maintaining performance
-- **Real-time Energy Monitoring**: Tracking energy consumption with minimal overhead
-- **Adaptive Optimization**: Adjusting configurations based on workload characteristics
+- **Second-Order Prediction**: Uses a simple yet optimal predictor that extrapolates skipped steps from the observed information set
+- **Interleaved Skipping Scheme**: Maintains stability during aggressive acceleration by reusing observed information
+- **Zero Overhead**: Requires no architectural modifications, feature caching, or additional memory
 
-Key benefits include:
-- 15-75% reduction in energy consumption for various DNN workloads
-- No offline profiling required
-- Minimal performance overhead
-- Compatibility with various GPU architectures
+Key benefits:
+- **2-3x faster inference** with minimal quality degradation
+- Works across different backbones (U-Net, DiT, MMDiT)
+- Compatible with multiple prediction objectives (ε, v, flow-matching)
+- Fewer than 20 lines of code to integrate
+- No training required
 
 ## Features
 
-- **Energy-Efficient Image Generation**: Reduced power consumption without sacrificing image quality
-- **Drop-in Replacement**: Compatible with standard Stable Diffusion pipelines
-- **Automatic Optimization**: ZEUS handles energy optimization automatically
-- **Production Ready**: Built on top of proven libraries (Diffusers, PyTorch, Transformers)
-- **GPU Monitoring**: Real-time energy and power consumption tracking
+- **Fast Inference**: 2-3x speedup over standard diffusion sampling
+- **Training-Free**: Works with off-the-shelf pretrained models without fine-tuning
+- **Quality Preservation**: Maintains perceptual quality (LPIPS, FID) at aggressive speedups
+- **Model Agnostic**: Compatible with Stable Diffusion 1.5, 2.1, SDXL, and FLUX
+- **Solver Flexible**: Works with Euler, DPM-Solver++, and other ODE solvers
+- **Minimal Integration**: Drop-in replacement requiring minimal code changes
+- **Zero Memory Overhead**: O(1) additional memory - no feature caching required
 
 ## Requirements
 
@@ -156,54 +159,108 @@ ZEUS-Optimized-SD-Pipeline/
 
 ## How It Works
 
-The ZEUS-Optimized Stable Diffusion Pipeline wraps the standard Diffusers pipeline with ZEUS's energy optimization capabilities:
+ZEUS accelerates diffusion model inference through intelligent step skipping:
 
-1. **Power Monitoring**: ZEUS monitors GPU power consumption in real-time
-2. **Dynamic Optimization**: Automatically adjusts GPU power limits to find the optimal energy-performance tradeoff
-3. **Transparent Integration**: Works seamlessly with existing Stable Diffusion models without code changes
-4. **Minimal Overhead**: Energy optimization adds negligible computational overhead
+### The Core Concept
 
-## Energy Savings
+During diffusion sampling, the model iteratively denoises an image through many steps. Each step requires a computationally expensive forward pass through the denoiser network. ZEUS speeds this up by:
 
-Expected energy savings vary based on:
-- GPU model and architecture
-- Image resolution and generation parameters
-- Number of inference steps
-- Batch size
+1. **Strategic Step Skipping**: Performing full denoiser evaluations only at selected steps (e.g., every 2nd or 3rd step)
+2. **Second-Order Prediction**: Approximating skipped steps using a simple predictor based on the "observed information set"
+3. **Interleaved Reuse**: Maintaining stability by alternating between extrapolation and reuse
 
-Typical savings range from **15% to 75%** compared to standard implementations, with minimal impact on generation quality or speed.
+### The Observed Information Set
 
-## Performance Considerations
+At each full evaluation step `t`, ZEUS has access to:
+- `ψ_t`: The current denoiser output
+- `Δψ_t = ψ_t - ψ_{t+1}`: The backward difference (local trend information)
 
-- **First Run**: Initial optimization may take slightly longer as ZEUS profiles the workload
-- **Subsequent Runs**: Optimization becomes more efficient with repeated use
-- **Batch Processing**: Higher energy efficiency with larger batch sizes
-- **GPU Compatibility**: Best results on modern NVIDIA GPUs (Ampere, Ada Lovelace architectures)
+### Second-Order Predictor
+
+For approximating a skipped step, ZEUS uses the optimal two-point predictor:
+
+```
+ψ̂_{t-1} = 2ψ_t - ψ_{t+1}
+```
+
+This predictor is:
+- **Unbiased** for affine trends
+- **Variance-optimal** (BLUE - Best Linear Unbiased Estimator)
+- **Second-order accurate** with O(Δ²) bias
+
+### Interleaved Approximation Scheme
+
+For consecutive reduced steps (aggressive acceleration), ZEUS uses an interleaved pattern:
+
+```
+ψ̂_{t-j} = {
+    2ψ_t - ψ_{t+1}  if j is odd
+    ψ_t              if j is even
+}
+```
+
+This prevents error accumulation while maintaining second-order precision where it matters most.
+
+## Performance
+
+### Speedup vs Quality Tradeoff
+
+ZEUS offers multiple acceleration presets:
+
+- **ZEUS-Medium** (~1.8-2.0x speedup): Best quality preservation, minimal artifacts
+- **ZEUS-Fast** (~2.4x speedup): Balanced speed/quality tradeoff
+- **ZEUS-Turbo** (~3.2x speedup): Maximum speed with acceptable quality
+
+### Benchmark Results (from paper)
+
+**FLUX.1-dev (Euler solver, 50 steps):**
+- ZEUS-Medium: 2.09x speedup, LPIPS 0.047, FID 1.53
+- ZEUS-Fast: 2.47x speedup, LPIPS 0.079, FID 2.49
+- ZEUS-Turbo: 3.22x speedup, LPIPS 0.171, FID 4.52
+
+**SDXL (DPM-Solver++, 50 steps):**
+- ZEUS-Medium: 1.87x speedup, LPIPS 0.084, FID 3.59
+- ZEUS-Fast: 1.93x speedup, LPIPS 0.129, FID 5.39
+
+*Lower LPIPS/FID is better. ZEUS maintains competitive quality while significantly reducing sampling time.*
 
 ## Benchmarking
 
-To measure energy consumption and compare with standard pipelines:
+To measure speedup and quality metrics:
 
 ```python
+import time
 from zeus_sd_pipeline.zeus_pipeline import ZeusOptimizedStableDiffusionPipeline
-from zeus.monitor import ZeusMonitor
+from diffusers import StableDiffusionPipeline
+import torch
 
-# Initialize monitor
-monitor = ZeusMonitor(gpu_indices=[0])
+prompt = "a serene mountain landscape at sunset"
 
-# Start monitoring
-monitor.begin_window("sd_generation")
-
-# Generate image
-pipe = ZeusOptimizedStableDiffusionPipeline.from_pretrained(
-    "stable-diffusion-v1-5/stable-diffusion-v1-5"
+# Baseline (full evaluation)
+baseline_pipe = StableDiffusionPipeline.from_pretrained(
+    "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    torch_dtype=torch.float16
 ).to("cuda")
-image = pipe("a beautiful sunset").images[0]
 
-# Get measurements
-measurement = monitor.end_window("sd_generation")
-print(f"Energy consumed: {measurement.total_energy} J")
-print(f"Time elapsed: {measurement.time} s")
+start = time.time()
+baseline_image = baseline_pipe(prompt, num_inference_steps=50).images[0]
+baseline_time = time.time() - start
+
+# ZEUS-accelerated
+zeus_pipe = ZeusOptimizedStableDiffusionPipeline.from_pretrained(
+    "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    torch_dtype=torch.float16
+).to("cuda")
+
+start = time.time()
+zeus_image = zeus_pipe(prompt, num_inference_steps=50).images[0]
+zeus_time = time.time() - start
+
+print(f"Baseline: {baseline_time:.2f}s")
+print(f"ZEUS: {zeus_time:.2f}s")
+print(f"Speedup: {baseline_time/zeus_time:.2f}x")
+
+# Compare images using LPIPS, FID, etc.
 ```
 
 ## Contributing
@@ -247,20 +304,22 @@ pytest tests/
 
 ## Acknowledgments
 
-- **ZEUS Framework**: [ML.ENERGY Initiative](https://ml.energy/zeus/) for the energy optimization framework
+- **ZEUS Paper**: "ZEUS: Accelerating Diffusion Models with Only Second-Order Predictor" by Yixiao Wang, Ting Jiang, Zishan Shao, et al. (April 2026)
+- **Original Implementation**: [ZEUS GitHub Repository](https://github.com/Ting-Justin-Jiang/ZEUS)
 - **Hugging Face Diffusers**: For the excellent Stable Diffusion implementation
-- **Research Paper**: *Zeus: Understanding and Optimizing GPU Energy Consumption of DNN Training* (NSDI '23)
+- **Duke University**: Research team behind the ZEUS acceleration framework
 
 ### Citations
 
-If you use this project in your research, please consider citing both the ZEUS framework and Stable Diffusion:
+If you use this project in your research, please cite the ZEUS paper:
 
 ```bibtex
-@inproceedings{zeus-nsdi23,
-  title = {Zeus: Understanding and Optimizing {GPU} Energy Consumption of {DNN} Training},
-  author = {Jie You and Jae-Won Chung and Mosharaf Chowdhury},
-  booktitle = {USENIX NSDI},
-  year = {2023}
+@article{wang2026zeus,
+  title={ZEUS: Accelerating Diffusion Models with Only Second-Order Predictor},
+  author={Wang, Yixiao and Jiang, Ting and Shao, Zishan and Ye, Hancheng and 
+          Sun, Jingwei and Ma, Mingyuan and Zhang, Jianyi and Chen, Yiran and Li, Hai},
+  journal={arXiv preprint arXiv:2604.01552},
+  year={2026}
 }
 ```
 
@@ -270,29 +329,33 @@ This project is open-source. Please check the LICENSE file for details.
 
 ## Related Projects
 
-- [ZEUS](https://github.com/ml-energy/zeus) - The energy optimization framework
-- [Hugging Face Diffusers](https://github.com/huggingface/diffusers) - State-of-the-art diffusion models
-- [ML.ENERGY Leaderboard](https://ml.energy/leaderboard) - Benchmark for LLM energy consumption
-- [Stable Diffusion](https://github.com/CompVis/stable-diffusion) - Original Stable Diffusion implementation
+- **ZEUS (Original)**: [https://github.com/Ting-Justin-Jiang/ZEUS](https://github.com/Ting-Justin-Jiang/ZEUS) - Original ZEUS acceleration framework
+- **Hugging Face Diffusers**: [https://github.com/huggingface/diffusers](https://github.com/huggingface/diffusers) - State-of-the-art diffusion models
+- **DeepCache**: Feature reuse acceleration for diffusion models
+- **ToCa**: Token-wise caching for transformer-based diffusion
+- **Stable Diffusion**: [https://github.com/CompVis/stable-diffusion](https://github.com/CompVis/stable-diffusion) - Original Stable Diffusion implementation
 
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/MubashirAziz1/ZEUS-Optimized-SD-Pipeline/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/MubashirAziz1/ZEUS-Optimized-SD-Pipeline/discussions)
-- **ZEUS Documentation**: [ml.energy/zeus](https://ml.energy/zeus/)
+- **ZEUS Paper**: [arXiv:2604.01552](https://arxiv.org/abs/2604.01552)
+- **Original ZEUS**: [https://github.com/Ting-Justin-Jiang/ZEUS](https://github.com/Ting-Justin-Jiang/ZEUS)
 
 ## Roadmap
 
-- [ ] Support for additional Stable Diffusion models (SD 2.0, SDXL)
+- [ ] Support for additional Stable Diffusion models (SDXL Turbo, Lightning)
 - [ ] Integration with LoRA and ControlNet
-- [ ] Energy consumption dashboard and visualization
-- [ ] Multi-GPU optimization support
-- [ ] Command-line interface for quick generation
-- [ ] Pre-configured optimization profiles for different use cases
-- [ ] Comprehensive benchmarking suite
+- [ ] Adaptive step selection based on image complexity
+- [ ] Video generation support (AnimateDiff, I2VGen-XL)
+- [ ] Multi-GPU inference optimization
+- [ ] Command-line interface for batch processing
+- [ ] Quality-speed tradeoff presets for different use cases
+- [ ] Comprehensive benchmarking suite with multiple metrics
+- [ ] Integration with popular SD web interfaces (Automatic1111, ComfyUI)
 
 ---
 
 **Made with ⚡ by [MubashirAziz1](https://github.com/MubashirAziz1)**
 
-*Reducing AI's carbon footprint, one image at a time.*
+*Making diffusion models faster, one skip at a time.*
