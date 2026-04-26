@@ -10,4 +10,5 @@ pipe = pipe.to("cuda")
 
 prompt = "a photo of an astronaut riding a horse on mars"
 image = pipe(prompt).images[0]
-save_image(image, "/kaggle/working/ZEUS-Optimized-SD-Pipeline/output.png")
+#save_image(image, "/kaggle/working/ZEUS-Optimized-SD-Pipeline/output.png")
+image.save("/kaggle/working/ZEUS-Optimized-SD-Pipeline/output.png")
